@@ -1,5 +1,7 @@
 # smartsocket
 
+Use a YubiKey for GPG auth when either local or connected remotely via ssh.
+
 A smart GPG SSH agent socket proxy that dynamically routes to either a remote
 forwarded socket or a local gpg-agent socket.
 
