@@ -1,0 +1,13 @@
+[Unit]
+Description=Smart GPG Agent Socket Proxy
+Documentation=https://github.com/lkingland/smartsocket
+
+[Socket]
+ListenStream=%t/gnupg/S.gpg-agent
+FileDescriptorName=gpg
+Service=smartsocket.service
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

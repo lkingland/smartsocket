@@ -1,13 +1,10 @@
 [Unit]
-Description=Smart GPG SSH Socket Proxy
+Description=Smart GPG/SSH Socket Proxy
 Documentation=https://github.com/lkingland/smartsocket
-After=gpg-agent.socket
+Requires=smartsocket-gpg.socket smartsocket-ssh.socket
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/smartsocket
 Restart=on-failure
 RestartSec=5
-
-[Install]
-WantedBy=default.target
