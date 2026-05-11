@@ -163,6 +163,45 @@ export SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
 $env.SSH_AUTH_SOCK = "/run/user/1000/gnupg/S.gpg-agent.ssh"
 ```
 
+## Known Issues
+
+### Free-running gpg-agent steals smartsocket's sockets
+
+Symptom: connections via `S.gpg-agent` or `S.gpg-agent.ssh` bypass
+smartsocket and hit a local gpg-agent instead — e.g. `ssh-add -L`
+returns "no identities" or only the local key when a remote key
+should be in play. `ss -lxn | grep S.gpg-agent` shows two listeners
+on the same path (smartsocket's, backlog 4096; the rogue's, backlog
+64).
+
+Cause: any process that runs `gpg-agent --use-standard-socket --daemon`
+(directly or via `gpgconf --launch gpg-agent`, or via `gpg-connect-agent`
+without `--no-autostart`) will `unlink()` smartsocket's socket file at
+`/run/user/<uid>/gnupg/S.gpg-agent{,.ssh}` and re-bind its own listener
+there. systemd's listener inode survives in the kernel but the
+filesystem path now points to the rogue, so smartsocket is bypassed.
+
+Recovery: restart the smartsocket socket units so they re-bind the
+filesystem paths.
+
+```bash
+pkill -f 'gpg-agent.*--daemon'
+systemctl --user restart smartsocket-gpg.socket smartsocket-ssh.socket
+```
+
+Prevention: keep shell rc files and SSH config from auto-launching
+gpg-agent.
+
+- Remove `gpgconf --launch gpg-agent` from shell startup (`.bashrc`,
+  `config.nu`, etc.) — smartsocket + `gpg-agent-local.service` are
+  socket-activated, so no explicit launch is needed.
+- If you have a `Match host * exec "gpg-connect-agent UPDATESTARTUPTTY
+  /bye"` block in `~/.ssh/config` for pinentry-tty integration, add
+  `--no-autostart`:
+  ```
+  Match host * exec "gpg-connect-agent --no-autostart UPDATESTARTUPTTY /bye"
+  ```
+
 ## Management
 
 ```bash
