@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,137 +45,7 @@ var sockets = []socketSet{
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "generate" {
-		if err := generateLocalUnits(); err != nil {
-			log.Fatalf("failed to generate local units: %v", err)
-		}
-		return
-	}
-
 	runProxy()
-}
-
-// generateLocalUnits copies system gpg-agent units and transforms them to local versions
-func generateLocalUnits() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("getting home dir: %w", err)
-	}
-
-	targetDir := filepath.Join(home, ".config", "systemd", "user")
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("creating target dir: %w", err)
-	}
-
-	systemDir := "/usr/lib/systemd/user"
-
-	// Transform socket units
-	socketTransforms := []struct {
-		source string
-		target string
-	}{
-		{"gpg-agent.socket", "gpg-agent-local.socket"},
-		{"gpg-agent-ssh.socket", "gpg-agent-ssh-local.socket"},
-	}
-
-	for _, t := range socketTransforms {
-		src := filepath.Join(systemDir, t.source)
-		dst := filepath.Join(targetDir, t.target)
-
-		if err := transformSocketUnit(src, dst); err != nil {
-			return fmt.Errorf("transforming %s: %w", t.source, err)
-		}
-		fmt.Printf("Generated %s\n", dst)
-	}
-
-	// Transform service unit
-	srcService := filepath.Join(systemDir, "gpg-agent.service")
-	dstService := filepath.Join(targetDir, "gpg-agent-local.service")
-	if err := transformServiceUnit(srcService, dstService); err != nil {
-		return fmt.Errorf("transforming gpg-agent.service: %w", err)
-	}
-	fmt.Printf("Generated %s\n", dstService)
-
-	return nil
-}
-
-// transformSocketUnit reads a socket unit and writes a local version
-func transformSocketUnit(src, dst string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	output, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-
-	scanner := bufio.NewScanner(input)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Transform Description - append (local)
-		if strings.HasPrefix(line, "Description=") {
-			line = strings.TrimSuffix(line, ")")
-			if strings.HasSuffix(line, ")") {
-				// Has parenthetical, insert before closing paren
-				line = line[:len(line)-1] + ", local)"
-			} else {
-				line = line + " (local)"
-			}
-		}
-
-		// Transform ListenStream - append .local before end
-		if strings.HasPrefix(line, "ListenStream=") {
-			line = line + ".local"
-		}
-
-		// Transform Service= reference
-		if strings.HasPrefix(line, "Service=") {
-			line = "Service=gpg-agent-local.service"
-		}
-
-		fmt.Fprintln(output, line)
-	}
-
-	return scanner.Err()
-}
-
-// transformServiceUnit reads a service unit and writes a local version
-func transformServiceUnit(src, dst string) error {
-	input, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer input.Close()
-
-	output, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-
-	scanner := bufio.NewScanner(input)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Transform Description - append (local)
-		if strings.HasPrefix(line, "Description=") {
-			line = line + " (local)"
-		}
-
-		// Transform Requires= reference
-		if strings.HasPrefix(line, "Requires=") {
-			line = "Requires=gpg-agent-local.socket"
-		}
-
-		fmt.Fprintln(output, line)
-	}
-
-	return scanner.Err()
 }
 
 func runProxy() {

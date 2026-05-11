@@ -8,7 +8,9 @@ install: build
 	install -Dm644 smartsocket.service ~/.config/systemd/user/smartsocket.service
 	install -Dm644 smartsocket-gpg.socket ~/.config/systemd/user/smartsocket-gpg.socket
 	install -Dm644 smartsocket-ssh.socket ~/.config/systemd/user/smartsocket-ssh.socket
-	~/.local/bin/smartsocket generate
+	install -Dm644 gpg-agent-local.socket ~/.config/systemd/user/gpg-agent-local.socket
+	install -Dm644 gpg-agent-ssh-local.socket ~/.config/systemd/user/gpg-agent-ssh-local.socket
+	install -Dm644 gpg-agent-local.service ~/.config/systemd/user/gpg-agent-local.service
 	systemctl --user daemon-reload
 
 uninstall: disable
@@ -23,12 +25,12 @@ uninstall: disable
 
 enable:
 	systemctl --user mask gpg-agent.socket gpg-agent-ssh.socket gpg-agent.service
-	systemctl --user start gpg-agent-local.socket gpg-agent-ssh-local.socket
+	systemctl --user enable --now gpg-agent-local.socket gpg-agent-ssh-local.socket
 	systemctl --user enable --now smartsocket-gpg.socket smartsocket-ssh.socket
 
 disable:
 	systemctl --user disable --now smartsocket-gpg.socket smartsocket-ssh.socket || true
-	systemctl --user stop gpg-agent-local.socket gpg-agent-ssh-local.socket || true
+	systemctl --user disable --now gpg-agent-local.socket gpg-agent-ssh-local.socket || true
 	systemctl --user unmask gpg-agent.socket gpg-agent-ssh.socket gpg-agent.service
 
 status:
