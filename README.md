@@ -44,10 +44,12 @@ server, I should be able to ssh auth and sign commits:
 - If the server's key is removed, it should seamlessly transition to the
   single key use case above.
 
-**Note:** Routing is based on socket availability, not key presence. If you SSH
-in without your key (remote socket is connectable but empty), smartsocket will
-still route to remote. To fall back to the server's key, disconnect the SSH
-session so the remote socket is no longer available.
+**Note:** Routing is based on **key presence**, not merely socket availability.
+If the remote socket is connectable but its agent holds no usable key — e.g. you
+SSH in without your key, or pull it while the session lingers — smartsocket
+automatically falls back to the local key. Remote takes precedence only when it
+actually carries a usable key (ssh: an offered identity; gpg: a reachable card).
+To force local while a *keyed* remote is connected, disconnect the session.
 
 
 ## How It Works
@@ -63,8 +65,11 @@ S.gpg-agent.ssh → [systemd] → smartsocket → S.gpg-agent.ssh.remote  (forwa
                                           ↘ S.gpg-agent.ssh.local   → [systemd] → gpg-agent
 ```
 
-For each connection, smartsocket probes the remote socket (500ms timeout).
-If remote is available, it proxies there; otherwise, it proxies to local.
+For each connection, smartsocket probes the remote socket: it must be connectable
+**and** hold a usable key (ssh-agent: at least one offered identity; gpg/Assuan: a
+card serial from `SCD SERIALNO`). If so, it proxies to remote; otherwise — remote
+unreachable, connectable-but-empty, or any probe error/timeout — it fails toward
+local.
 
 **No configuration needed** - clients use standard socket paths and smartsocket
 handles the routing transparently.
@@ -173,6 +178,15 @@ returns "no identities" or only the local key when a remote key
 should be in play. `ss -lxn | grep S.gpg-agent` shows two listeners
 on the same path (smartsocket's, backlog 4096; the rogue's, backlog
 64).
+
+Note: since smartsocket became key-aware, "only the local key when a
+remote key should be in play" can *also* be smartsocket correctly
+falling back to local because the remote probe found no usable key
+(empty remote agent, or a slow forward that exceeded the probe
+deadline) — not a steal. The **two-listeners** check above is the
+discriminator: two listeners on one path = rogue steal (recover
+below); a single listener = smartsocket's own key-aware decision
+(check the remote actually holds a key / isn't laggy).
 
 Cause: any process that runs `gpg-agent --use-standard-socket --daemon`
 (directly or via `gpgconf --launch gpg-agent`, or via `gpg-connect-agent`

@@ -12,6 +12,7 @@ install: build
 	install -Dm644 gpg-agent-ssh-local.socket ~/.config/systemd/user/gpg-agent-ssh-local.socket
 	install -Dm644 gpg-agent-local.service ~/.config/systemd/user/gpg-agent-local.service
 	systemctl --user daemon-reload
+	systemctl --user try-restart smartsocket.service
 
 uninstall: disable
 	rm -f ~/.local/bin/smartsocket
