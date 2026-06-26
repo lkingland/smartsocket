@@ -1,7 +1,7 @@
 .PHONY: build install uninstall enable disable status
 
 build:
-	go build -o smartsocket .
+	go build -o smartsocket ./cmd/smartsocket
 	go build -o pinentry-smart ./cmd/pinentry-smart
 
 install: build
