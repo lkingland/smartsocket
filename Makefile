@@ -2,9 +2,11 @@
 
 build:
 	go build -o smartsocket .
+	go build -o pinentry-smart ./cmd/pinentry-smart
 
 install: build
 	install -Dm755 smartsocket ~/.local/bin/smartsocket
+	install -Dm755 pinentry-smart ~/.local/bin/pinentry-smart
 	install -Dm644 smartsocket.service ~/.config/systemd/user/smartsocket.service
 	install -Dm644 smartsocket-gpg.socket ~/.config/systemd/user/smartsocket-gpg.socket
 	install -Dm644 smartsocket-ssh.socket ~/.config/systemd/user/smartsocket-ssh.socket
@@ -16,6 +18,7 @@ install: build
 
 uninstall: disable
 	rm -f ~/.local/bin/smartsocket
+	rm -f ~/.local/bin/pinentry-smart
 	rm -f ~/.config/systemd/user/smartsocket.service
 	rm -f ~/.config/systemd/user/smartsocket-gpg.socket
 	rm -f ~/.config/systemd/user/smartsocket-ssh.socket

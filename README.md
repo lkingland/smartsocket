@@ -168,6 +168,58 @@ export SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
 $env.SSH_AUTH_SOCK = "/run/user/1000/gnupg/S.gpg-agent.ssh"
 ```
 
+## Pinentry Forwarding
+
+When the **local** key serves (no remote connected, or the remote is keyless),
+gpg-agent needs the local card's PIN. On a headless / windowless server the default
+curses pinentry is awkward (and unusable for a non-interactive agent). `pinentry-smart`
+instead forwards the PIN prompt to the **client's native pinentry** (e.g.
+`pinentry-mac`) over a reverse-forwarded socket, falling back to a local pinentry when
+no client is connected. It rides the client's existing **outbound** SSH session — no
+inbound SSH to the client, and no credential stored on the server.
+
+`make install` builds and installs `pinentry-smart` to `~/.local/bin/`.
+
+### Server (where smartsocket runs)
+
+Point gpg-agent at the wrapper and reload:
+
+```
+# ~/.gnupg/gpg-agent.conf
+pinentry-program /home/<you>/.local/bin/pinentry-smart
+```
+
+```bash
+systemctl --user restart gpg-agent-local.service   # re-read the config
+```
+
+`pinentry-smart` forwards to the client iff `/run/user/<uid>/gnupg/S.pinentry` is a
+live pinentry (i.e. the client is connected and its responder is up); otherwise it
+execs the local fallback (`/usr/bin/pinentry-curses` by default). Both are overridable
+via `PINENTRY_SMART_SOCKET` and `PINENTRY_SMART_FALLBACK`.
+
+### Client (the machine you SSH from)
+
+Reverse-forward a pinentry socket back to the server (alongside the gpg-agent
+forwards), and run a small responder that hands each connection to your native
+pinentry. In `~/.ssh/config`, under the server's `Host` block:
+
+```
+RemoteForward /run/user/1000/gnupg/S.pinentry /Users/<you>/.hamr/pinentry.sock
+StreamLocalBindUnlink yes
+```
+
+Run the responder **in your GUI login session** (e.g. a macOS LaunchAgent) so the
+native dialog can draw:
+
+```bash
+socat UNIX-LISTEN:$HOME/.hamr/pinentry.sock,fork,unlink-early EXEC:/opt/homebrew/bin/pinentry-mac
+```
+
+With the session up, the server's local-card PIN prompt pops as your native pinentry;
+with it down, the server falls back to its local pinentry automatically (the forwarded
+socket disappears on disconnect via `StreamLocalBindUnlink`).
+
 ## Known Issues
 
 ### Free-running gpg-agent steals smartsocket's sockets
