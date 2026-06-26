@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -91,10 +92,18 @@ func forward(in io.Reader, out io.Writer, sock string) bool {
 	return true
 }
 
+// fallback REPLACES this process with the local pinentry (syscall.Exec, not a
+// fork) so the pinentry inherits gpg-agent's exact process context — same PID,
+// fds, and process group / controlling tty. A forked child (exec.Command.Run)
+// lands in a different process group and can't grab the tty's foreground to read
+// the PIN → "agent refused operation". This mirrors a shell `exec`.
 func fallback() {
-	cmd := exec.Command(fallbackProgram(), os.Args[1:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	_ = cmd.Run()
+	path, err := exec.LookPath(fallbackProgram())
+	if err != nil {
+		os.Exit(2)
+	}
+	argv := append([]string{path}, os.Args[1:]...)
+	if err := syscall.Exec(path, argv, os.Environ()); err != nil {
+		os.Exit(2)
+	}
 }

@@ -182,7 +182,10 @@ inbound SSH to the client, and no credential stored on the server.
 
 ### Server (where smartsocket runs)
 
-Point gpg-agent at the wrapper and reload:
+Point gpg-agent at the wrapper and reload. **The path must be absolute** —
+gpg-agent spawns `pinentry-program` directly with **no PATH search**, so a bare
+name (`pinentry-smart`) fails with `can't connect to the PIN entry module …:
+IPC connect call failed` / `No pinentry`.
 
 ```
 # ~/.gnupg/gpg-agent.conf
@@ -209,12 +212,21 @@ RemoteForward /run/user/1000/gnupg/S.pinentry /Users/<you>/.hamr/pinentry.sock
 StreamLocalBindUnlink yes
 ```
 
-Run the responder **in your GUI login session** (e.g. a macOS LaunchAgent) so the
-native dialog can draw:
+Run the responder **in your GUI login session** so the native dialog can draw —
+test it from a GUI terminal first:
 
 ```bash
-socat UNIX-LISTEN:$HOME/.hamr/pinentry.sock,fork,unlink-early EXEC:/opt/homebrew/bin/pinentry-mac
+socat UNIX-LISTEN:$HOME/.hamr/pinentry.sock,fork,unlink-early EXEC:$(which pinentry-mac)
 ```
+
+`socat` is the listener-and-launcher: the SSH `RemoteForward` delivers to a *socket*,
+but `pinentry-mac` speaks Assuan on stdin/stdout — so `UNIX-LISTEN` gives the forward a
+target and `EXEC` spawns a fresh `pinentry-mac` per connection with the socket wired to
+its stdio (`fork` = one per PIN request). It runs silently; the popup is the output.
+
+Once proven, make it permanent with a user **LaunchAgent** (`~/Library/LaunchAgents/
+io.kingland.hamr.pinentry.plist`, `RunAtLoad`+`KeepAlive`, args `socat UNIX-LISTEN:…
+EXEC:…/pinentry-mac`) — it stays in the GUI session and survives reconnects/reboots.
 
 With the session up, the server's local-card PIN prompt pops as your native pinentry;
 with it down, the server falls back to its local pinentry automatically (the forwarded
