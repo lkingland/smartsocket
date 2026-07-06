@@ -98,15 +98,58 @@ SSH Authentication and signing should work when either local to a stationary
 desktop/server where smartsocket is installed, or when connecting from
 a remote client such as a laptop or other physically distant server.
 
-### When Local: 
+Each case is just a different answer to one question — *does the remote hold a
+usable key?* (see [How It Works](#how-it-works) for the probe). In the diagrams:
+**green** = the path that lights up, **grey** = dormant, **🔑 amber** = a key
+that's physically present.
+
+### When Local:
 When server-local (not connected remotely via ssh) I am able to make SSH
 connections and sign git commits using a YubiKey plugged in locally.
+
+The remote socket isn't forwarded (no session), so the probe finds nothing and
+smartsocket routes to the local gpg-agent and its YubiKey.
+
+```mermaid
+flowchart LR
+    t["tools on server"] --> s(("smart"))
+    s -.->|"remote empty"| r["remote"]
+    s ==>|"routes local"| l["local gpg-agent"]
+    l --> ks["🔑 server key"]
+    kc["client key — none"]
+
+    classDef on fill:#d7f5dd,stroke:#1a7f37,stroke-width:2px,color:#08260f;
+    classDef off fill:#ececec,stroke:#b0b0b0,color:#6b6b6b;
+    classDef key fill:#fff3bf,stroke:#bf8700,color:#3d2f00;
+    class t,s,l on;
+    class r,kc off;
+    class ks key;
+```
 
 ### When Remote - Single Key:
 When in physical posession of the key, I should be able to ssh and sign:
 - Locally on the connecting client as usual
 - Remotely over an ssh connection (via agent forwarding) using the key in my
   posession.
+
+The key rides your SSH session onto the server; smartsocket probes the forwarded
+socket, sees a usable key, and routes remote. The server needs no key of its own.
+
+```mermaid
+flowchart LR
+    kc["🔑 client key"] ==>|"SSH forward"| r["remote"]
+    t["tools on server"] --> s(("smart"))
+    s ==>|"remote has key"| r
+    s -.->|"local: no card"| l["local gpg-agent"]
+    ks["server key — none"]
+
+    classDef on fill:#d7f5dd,stroke:#1a7f37,stroke-width:2px,color:#08260f;
+    classDef off fill:#ececec,stroke:#b0b0b0,color:#6b6b6b;
+    classDef key fill:#fff3bf,stroke:#bf8700,color:#3d2f00;
+    class t,s,r on;
+    class l,ks off;
+    class kc key;
+```
 
 ### When Remote - Dual Keys:
 When both in possession of a key, and a duplicate key is left inserted in the
@@ -116,6 +159,51 @@ server, I should be able to ssh auth and sign commits:
   the client, taking precedence over the key connected to the server.
 - If the server's key is removed, it should seamlessly transition to the
   single key use case above.
+
+The forwarded key wins by precedence; the server's own key sits idle on standby.
+Pull the client key (even while the session lingers) and the next probe finds the
+remote empty, so smartsocket seamlessly falls back to the idle server key.
+
+```mermaid
+flowchart LR
+    kc["🔑 client key"] ==>|"SSH forward"| r["remote"]
+    t["tools on server"] --> s(("smart"))
+    s ==>|"remote wins (precedence)"| r
+    s -.->|"standby"| l["local gpg-agent"]
+    l -.- ks["🔑 server key (idle)"]
+
+    classDef on fill:#d7f5dd,stroke:#1a7f37,stroke-width:2px,color:#08260f;
+    classDef off fill:#ececec,stroke:#b0b0b0,color:#6b6b6b;
+    classDef key fill:#fff3bf,stroke:#bf8700,color:#3d2f00;
+    classDef idle fill:#fff8dd,stroke:#c9a200,color:#5a4a00,stroke-dasharray:4 3;
+    class t,s,r on;
+    class kc key;
+    class l off;
+    class ks idle;
+```
+
+### When Neither (no key anywhere):
+No key is forwarded and none is plugged into the server. The remote probe finds
+nothing, so smartsocket still **fails toward local** — but the local agent has no
+card either, so the operation simply fails (as it should). Nothing is silently
+proxied to a keyless agent.
+
+```mermaid
+flowchart LR
+    t["tools on server"] --> s(("smart"))
+    s -.->|"remote empty"| r["remote"]
+    s ==>|"fails toward local"| l["local gpg-agent"]
+    l --> x["❌ no card —<br/>operation fails"]
+    kc["client key — none"]
+    ks["server key — none"]
+
+    classDef on fill:#d7f5dd,stroke:#1a7f37,stroke-width:2px,color:#08260f;
+    classDef off fill:#ececec,stroke:#b0b0b0,color:#6b6b6b;
+    classDef fail fill:#ffd7d5,stroke:#cf222e,color:#5a0a0a;
+    class t,s,l on;
+    class r,kc,ks off;
+    class x fail;
+```
 
 **Note:** Routing is based on **key presence**, not merely socket availability.
 If the remote socket is connectable but its agent holds no usable key — e.g. you
@@ -127,24 +215,116 @@ To force local while a *keyed* remote is connected, disconnect the session.
 
 ## How It Works
 
-Smartsocket uses systemd socket activation to transparently intercept
-connections to the standard gpg-agent socket paths:
+Your tools always connect to the **same two well-known sockets**. Behind them,
+`smartsocket` decides — per connection — which agent actually holds a usable key.
 
+### One router, many uses
+
+Everything that needs your key funnels through just two protocol sockets — the
+Assuan socket (`S.gpg-agent`) for signing/decryption and the ssh-agent socket
+(`S.gpg-agent.ssh`) for authentication — and `smartsocket` backs both with
+whichever YubiKey is currently usable, local or remote.
+
+```mermaid
+flowchart LR
+    u1["git commit -S<br/>(sign)"] --> gpg
+    u2["gpg --decrypt<br/>(decrypt)"] --> gpg
+    u3["gpg --sign / --encrypt"] --> gpg
+    u4["ssh · scp · git push<br/>(auth)"] --> ssh
+
+    gpg["S.gpg-agent<br/>Assuan protocol"] --> smart(("smartsocket"))
+    ssh["S.gpg-agent.ssh<br/>ssh-agent protocol"] --> smart
+    smart --> key["🔑 whichever YubiKey<br/>is usable — local or remote"]
+
+    classDef router fill:#cfe8ff,stroke:#0969da,stroke-width:2px,color:#082b52;
+    classDef sock fill:#efe6ff,stroke:#8250df,color:#2a1152;
+    classDef key fill:#fff3bf,stroke:#bf8700,color:#3d2f00;
+    class smart router;
+    class gpg,ssh sock;
+    class key key;
 ```
-S.gpg-agent     → [systemd] → smartsocket → S.gpg-agent.remote  (forwarded)
-                                          ↘ S.gpg-agent.local   → [systemd] → gpg-agent
 
-S.gpg-agent.ssh → [systemd] → smartsocket → S.gpg-agent.ssh.remote  (forwarded)
-                                          ↘ S.gpg-agent.ssh.local   → [systemd] → gpg-agent
+### Socket activation + key-aware routing
+
+systemd owns the well-known paths and hands each accepted connection to
+`smartsocket`, which proxies it to the **remote** (forwarded from a laptop over
+SSH) or the **local** gpg-agent. The laptop reaches the remote sockets via
+`RemoteForward`; the local sockets are themselves socket-activated in front of a
+dedicated `gpg-agent-local`.
+
+```mermaid
+flowchart LR
+    subgraph laptop["💻 Client / laptop"]
+        ykc["🔑 YubiKey"] --- agc["gpg-agent<br/>+ ssh support"]
+    end
+
+    subgraph host["🗄️ Server — smartsocket host"]
+        tools["Client tools<br/>ssh · git · gpg"]
+
+        subgraph wk["Well-known sockets (what clients use)"]
+            wkgpg["S.gpg-agent"]
+            wkssh["S.gpg-agent.ssh"]
+        end
+
+        smart(("smartsocket<br/>key-aware router"))
+
+        subgraph rem["Remote — forwarded over SSH"]
+            rgpg["S.gpg-agent.remote"]
+            rssh["S.gpg-agent.ssh.remote"]
+        end
+
+        subgraph loc["Local gpg-agent (socket-activated)"]
+            lgpg["S.gpg-agent.local"]
+            lssh["S.gpg-agent.ssh.local"]
+            agl["gpg-agent-local"]
+            lgpg --> agl
+            lssh --> agl
+        end
+
+        yks["🔑 local YubiKey<br/>(optional)"]
+
+        tools --> wk
+        wk -->|"systemd<br/>socket activation"| smart
+        smart -->|"remote holds a key"| rem
+        smart -->|"otherwise"| loc
+        agl --> yks
+    end
+
+    agc ==>|"SSH RemoteForward"| rem
+
+    classDef router fill:#cfe8ff,stroke:#0969da,stroke-width:2px,color:#082b52;
+    classDef sock fill:#efe6ff,stroke:#8250df,color:#2a1152;
+    classDef key fill:#fff3bf,stroke:#bf8700,color:#3d2f00;
+    classDef agent fill:#d7f5dd,stroke:#1a7f37,color:#08260f;
+    class smart router;
+    class wkgpg,wkssh,rgpg,rssh,lgpg,lssh sock;
+    class ykc,yks key;
+    class agc,agl agent;
 ```
 
-For each connection, smartsocket probes the remote socket: it must be connectable
-**and** hold a usable key (ssh-agent: at least one offered identity; gpg/Assuan: a
-card serial from `SCD SERIALNO`). If so, it proxies to remote; otherwise — remote
-unreachable, connectable-but-empty, or any probe error/timeout — it fails toward
-local.
+### The routing decision
 
-**No configuration needed** - clients use standard socket paths and smartsocket
+For each connection, smartsocket probes the `.remote` socket: it must be
+connectable **and** hold a usable key (ssh-agent: at least one offered identity;
+gpg/Assuan: a card serial from `SCD SERIALNO`). If so, it proxies to remote;
+otherwise — remote unreachable, connectable-but-empty, or any probe
+error/timeout — it **fails toward local**.
+
+```mermaid
+flowchart TD
+    start(["New connection on<br/>S.gpg-agent · S.gpg-agent.ssh"]) --> probe{"Probe the .remote socket —<br/>backed by a usable key?"}
+    probe -->|"ssh: ≥1 identity offered<br/>gpg: SCD SERIALNO returns a card serial"| remote["Route to REMOTE<br/>forwarded YubiKey"]
+    probe -->|"unreachable · empty · malformed · timeout"| local["Route to LOCAL<br/>local gpg-agent"]
+
+    classDef active fill:#d7f5dd,stroke:#1a7f37,stroke-width:2px,color:#08260f;
+    classDef fallback fill:#ffe1c2,stroke:#bc4c00,stroke-width:2px,color:#5a2600;
+    classDef q fill:#cfe8ff,stroke:#0969da,color:#082b52;
+    class remote active;
+    class local fallback;
+    class probe q;
+```
+
+**No configuration needed** — clients use standard socket paths and smartsocket
 handles the routing transparently.
 
 ## Installation
@@ -250,6 +430,27 @@ instead forwards the PIN prompt to the **client's native pinentry** (e.g.
 `pinentry-mac`) over a reverse-forwarded socket, falling back to a local pinentry when
 no client is connected. It rides the client's existing **outbound** SSH session — no
 inbound SSH to the client, and no credential stored on the server.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as gpg-agent-local
+    participant P as pinentry-smart
+    participant C as client pinentry (laptop)
+
+    Note over A,P: on the server — local YubiKey serves, card PIN needed
+    A->>P: exec, then speak Assuan over stdin/stdout
+    P->>P: is S.pinentry a live pinentry socket?
+    alt client connected — socket live, sends Assuan "OK"
+        P->>C: relay dialogue over reverse-forwarded S.pinentry
+        C->>C: native dialog drawn in laptop GUI, user types PIN
+        C-->>A: PIN (relayed back through pinentry-smart)
+        Note over A: unlock local YubiKey ✅
+    else no client / stale socket
+        P-->>A: syscall.Exec local fallback (pinentry-curses)
+        Note over A: PIN read on server console ✅
+    end
+```
 
 `make install` builds and installs `pinentry-smart` to `~/.local/bin/`.
 
