@@ -1,5 +1,78 @@
 # smartsocket
 
+**Use a YubiKey (or local keys) for GPG and SSH auth and signing — seamlessly,
+whether the key is plugged into the machine in front of you or forwarded over
+SSH from somewhere else.**
+
+`smartsocket` is a socket-activated router that sits in front of the standard
+`gpg-agent` and `ssh-agent` sockets. Your tools always connect to the same
+well-known paths; behind them, `smartsocket` figures out *where the usable key
+actually is* — a remotely forwarded YubiKey, a local one, or both — and routes
+each request to the right agent. PIN prompts are sent back to your own client's
+native pinentry, so signing and decryption Just Work no matter which end the key
+lives on.
+
+- **Drop-in** — occupies the normal socket paths; nothing downstream needs to
+  know it exists.
+- **Key-aware** — routes on whether a key can actually sign, not just whether
+  a socket is open.
+- **Local-or-remote** — prefers a forwarded key when present, falls back to a
+  local one automatically.
+- **GPG *and* SSH** — one router for both the Assuan signing socket and the
+  ssh-agent auth socket.
+
+## How `smartsocket` compares
+
+One socket path, the right key — whether your YubiKey is plugged into the
+machine in front of you or three SSH hops away.
+
+Forwarding a hardware key to a remote host has always been a choice between two
+half-solutions. [`ssh-agent-switcher`][sas] gives you a **stable socket path**
+that proxies to whatever forwarded agent happens to be live — great for
+surviving `tmux`, but SSH-only and blind to whether the key behind that socket
+can actually do anything. The classic [gpg-agent-over-SSH recipe][gpgfwd]
+(`RemoteForward … S.gpg-agent.extra` + `StreamLocalBindUnlink yes`) handles GPG
+signing, but it's a brittle, hand-rolled dance where a remote gpg-agent will
+happily autostart and steal your forwarded socket out from under you.
+
+**`smartsocket` sits at the intersection of those two ideas** — proxy-to-a-stable-path
+*and* the gpg-agent forwarding recipe — then adds the two things neither has:
+
+- **Key-presence routing.** Instead of picking the first socket that merely
+  *opens*, `smartsocket` probes for a genuinely usable key (`SCD SERIALNO` for
+  GPG, an offered identity for SSH) and routes to the one that can actually sign.
+- **Graceful local fallback with native-pinentry forwarding.** Remote key
+  present? Use it. Only a local YubiKey? Fall back to it automatically. PIN
+  prompts are forwarded back to *your* client's native pinentry via
+  `pinentry-smart` — no matter which end the key lives on.
+
+The result: your tooling always talks to the same socket, and `smartsocket`
+quietly makes sure it's backed by a key that works — local or remote, GPG or SSH.
+
+### Feature comparison
+
+| | **smartsocket** | [ssh-agent-switcher][sas] | [manual gpg-agent forward][gpgfwd] | 1Password SSH agent |
+|---|:---:|:---:|:---:|:---:|
+| SSH auth routing | ✅ | ✅ | ✅ | ✅ |
+| GPG / Assuan signing | ✅ | ❌ SSH only | ✅ | ❌ SSH only |
+| Routes on **key presence** (not just an open socket) | ✅ | ❌ first socket that opens | ❌ whatever's forwarded | ⚠️ partial |
+| Automatic **local fallback** when the remote is keyless | ✅ | ❌ | ❌ manual | ❌ |
+| Dual-key **precedence** (remote › local) | ✅ | ❌ | ❌ | via ssh-config conditionals |
+| Pinentry forwarded to the **client's** native prompt | ✅ `pinentry-smart` | ❌ | ❌ | ✅ (app-native) |
+| Survives `tmux` / stale `SSH_AUTH_SOCK` | ✅ | ✅ | ❌ | ✅ |
+| Transparent — no per-host config | ✅ systemd socket activation | ⚠️ minimal | ❌ fiddly per-host | ⚠️ low, but closed |
+| Open source | ✅ Go | ✅ Go | ✅ built-in tooling | ❌ commercial |
+
+<sub>Comparison reflects each tool's primary design goal; the adjacent projects
+are excellent at what they set out to do — `smartsocket` just targets a
+different sweet spot.</sub>
+
+[sas]: https://github.com/jmmv/ssh-agent-switcher
+[gpgfwd]: https://wiki.gnupg.org/AgentForwarding
+
+
+# Overview
+
 Installs a socket router which chooses local or remote sockets for GPG
 signing and authentication based on availability.
 
