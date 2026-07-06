@@ -4,6 +4,11 @@
 whether the key is plugged into the machine in front of you or forwarded over
 SSH from somewhere else.**
 
+> **New to YubiKeys?** If you haven't set up a YubiKey for GPG signing and SSH
+> auth yet, start with the **[YubiKey Setup Guide](docs/yubikey-setup.md)** — it
+> walks you from a blank key all the way to signing and authenticating, then
+> hands back here for the remote-forwarding setup.
+
 `smartsocket` is a socket-activated router that sits in front of the standard
 `gpg-agent` and `ssh-agent` sockets. Your tools always connect to the same
 well-known paths; behind them, `smartsocket` figures out *where the usable key
